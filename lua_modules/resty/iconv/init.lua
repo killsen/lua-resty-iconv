@@ -1,3 +1,11 @@
+
+-- lua-resty-iconv
+-- compatible with 64bit/32bit Windows
+-- https://github.com/killsen/lua-resty-iconv
+
+-- forked from xiaooloong/lua-resty-iconv
+-- https://github.com/xiaooloong/lua-resty-iconv
+
 local ffi = require 'ffi'
 local type = type
 local tonumber = tonumber
@@ -8,16 +16,72 @@ local ffi_gc = ffi.gc
 local ffi_string = ffi.string
 local ffi_typeof = ffi.typeof
 local ffi_errno = ffi.errno
-ffi.cdef[[
-    typedef void *iconv_t;
-    iconv_t iconv_open (const char *__tocode, const char *__fromcode);
-    size_t iconv (
-        iconv_t __cd,
-        char ** __inbuf, size_t * __inbytesleft,
-        char ** __outbuf, size_t * __outbytesleft
-    );
-    int iconv_close (iconv_t __cd);
+
+local function load_libiconv()
+--[[
+lua_modules/
+    resty/
+        iconv/
+            init.lua
+            libiconv32.dll
+            libiconv64.dll
+nginx/
+    -- here is ngx.config.prefix()
 ]]
+
+    local prefix    = ngx.config.prefix()
+    local is_64bit  = ffi.abi('64bit')
+    local file_name = is_64bit and "libiconv64.dll" or "libiconv32.dll"
+
+    local files = {
+        prefix .. "/../lua_modules/resty/iconv/" .. file_name,
+        prefix .. "/lua_modules/resty/iconv/" .. file_name,
+        prefix .. "/nginx/resty/iconv/" .. file_name,
+        prefix .. "/resty/iconv/" .. file_name,
+    }
+
+    for _, file in ipairs(files) do
+        local pok, lib = pcall(ffi.load, file)
+        if pok then return lib end
+    end
+end
+
+if ffi.os == "Windows" then
+
+    ffi.cdef[[
+        typedef void *iconv_t;
+        iconv_t libiconv_open (const char *__tocode, const char *__fromcode);
+        size_t libiconv (
+            iconv_t __cd,
+            char ** __inbuf, size_t * __inbytesleft,
+            char ** __outbuf, size_t * __outbytesleft
+        );
+        int libiconv_close (iconv_t __cd);
+    ]]
+
+    local lib = load_libiconv()
+    if lib then
+        ffi_c = {
+            iconv_open  = lib.libiconv_open,
+            iconv       = lib.libiconv,
+            iconv_close = lib.libiconv_close,
+        }
+    end
+
+else
+
+    ffi.cdef[[
+        typedef void *iconv_t;
+        iconv_t iconv_open (const char *__tocode, const char *__fromcode);
+        size_t iconv (
+            iconv_t __cd,
+            char ** __inbuf, size_t * __inbytesleft,
+            char ** __outbuf, size_t * __outbytesleft
+        );
+        int iconv_close (iconv_t __cd);
+    ]]
+
+end
 
 local maxsize = 4096
 local char_ptr = ffi_typeof('char *')
@@ -31,7 +95,7 @@ if not ok then
 end
 
 local _M = new_tab(0, 8)
-_M._VERSION = '0.2.0'
+_M._VERSION = '0.2.1'
 
 local mt = { __index = _M }
 
@@ -69,10 +133,10 @@ function _M.convert(self, text)
     end
     local maxsize = self.maxsize
     local buffer = self.buffer
-    
+
     local dst_len = ffi_new(sizet_ptr, maxsize)
     local dst_buff = ffi_new(char_ptr_ptr, ffi_cast(char_ptr, buffer))
-        
+
     local src_len = ffi_new(sizet_ptr, #text)
     local src_buff = ffi_new(char_ptr_ptr)
     src_buff[0] = ffi_new('char['.. #text .. ']', text)
