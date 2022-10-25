@@ -17,35 +17,6 @@ local ffi_string = ffi.string
 local ffi_typeof = ffi.typeof
 local ffi_errno = ffi.errno
 
-local function load_libiconv()
---[[
-lua_modules/
-    resty/
-        iconv/
-            init.lua
-            libiconv32.dll
-            libiconv64.dll
-nginx/
-    -- here is ngx.config.prefix()
-]]
-
-    local prefix    = ngx.config.prefix()
-    local is_64bit  = ffi.abi('64bit')
-    local file_name = is_64bit and "libiconv64.dll" or "libiconv32.dll"
-
-    local files = {
-        prefix .. "/../lua_modules/resty/iconv/" .. file_name,
-        prefix .. "/lua_modules/resty/iconv/" .. file_name,
-        prefix .. "/nginx/resty/iconv/" .. file_name,
-        prefix .. "/resty/iconv/" .. file_name,
-    }
-
-    for _, file in ipairs(files) do
-        local pok, lib = pcall(ffi.load, file)
-        if pok then return lib end
-    end
-end
-
 if ffi.os == "Windows" then
 
     ffi.cdef[[
@@ -59,8 +30,21 @@ if ffi.os == "Windows" then
         int libiconv_close (iconv_t __cd);
     ]]
 
-    local lib = load_libiconv()
-    if lib then
+    -- 加载同级目录下的动态链接库
+    local pok, lib = pcall(function()
+        local is_64bit = ffi.abi('64bit')
+        local file_name = is_64bit and "libiconv64.dll" or "libiconv32.dll"
+        local info = debug.getinfo(1)
+        local source = string.gsub(info.source, "@", "")
+        file_name = source .. "/../" .. file_name
+        return ffi.load(file_name)
+    end)
+
+    if not pok then
+        ngx.log(ngx.ERR, "load libiconv fail: ", lib)
+    end
+
+    if pok then
         ffi_c = {
             iconv_open  = lib.libiconv_open,
             iconv       = lib.libiconv,
@@ -95,7 +79,7 @@ if not ok then
 end
 
 local _M = new_tab(0, 8)
-_M._VERSION = '0.2.1'
+_M._VERSION = '0.2.2'
 
 local mt = { __index = _M }
 
